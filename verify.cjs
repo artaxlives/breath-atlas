@@ -1,0 +1,23 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const html=fs.readFileSync(__dirname+'/index.html','utf8');
+let drawCalls=0,clock=0,frame;
+const ctx=new Proxy({}, {get:(o,k)=>o[k]||(()=>{drawCalls++}),set:(o,k,v)=>(o[k]=v,true)});
+const elements={};for(const m of html.matchAll(/id="([^"]+)"/g))elements[m[1]]={textContent:'',value:m[1]==='depth-slider'?'60':'0',hidden:true,listeners:{},addEventListener(k,f){this.listeners[k]=f},setAttribute(k,v){this[k]=v}};
+const canvas=elements.anatomy;canvas.getContext=()=>ctx;canvas.getBoundingClientRect=()=>({width:1000,height:700});
+const buttons=[0,1,2,3].map(i=>({dataset:{stage:String(i)},classList:{toggle(){}},addEventListener(k,f){this[k]=f}}));
+const sandbox={console,Math,performance:{now:()=>clock},document:{getElementById:id=>elements[id],querySelectorAll:()=>buttons},requestAnimationFrame:f=>frame=f,devicePixelRatio:1};sandbox.window=sandbox;vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(__dirname+'/renderer.js','utf8'),sandbox);
+vm.runInContext(html.match(/<script>\s*([\s\S]*?)<\/script>/)[1],sandbox);
+const step=(ms)=>{clock+=ms;frame(clock)};const debug=sandbox.__breathAtlas;
+assert(canvas.width>0&&canvas.height>0);assert(debug.meshCount>=30);assert(drawCalls>1000);
+const before=debug.ribExpansion();step(500);assert.notEqual(before,debug.ribExpansion());
+const move=(id,value)=>{elements[id].value=String(value);elements[id].listeners.input()};
+move('zoom-slider',100);step(16);assert.equal(elements['stage-label'].textContent,'Alveolus');assert(debug.camera.distance<1);
+move('zoom-slider',0);assert.equal(elements['stage-label'].textContent,'Rib Cage');
+const oldY=debug.diaphragmY;move('depth-slider',95);assert(Math.abs(debug.diaphragmY-oldY)>.01);
+move('zoom-slider',100);elements['toggle-exchange'].listeners.click();const oldCount=debug.particleCount;for(let i=0;i<20;i++)step(110);assert(debug.particleCount>=oldCount+5);
+elements['toggle-exchange'].listeners.click();step(1000);const stopped=debug.particleCount;step(1000);assert.equal(stopped,debug.particleCount);
+for(const m of html.matchAll(/(?:src|href)="([^"]+)"/g))assert(fs.existsSync(__dirname+'/'+m[1]),'Missing '+m[1]);
+for(const b of buttons){b.click();step(16);assert(elements['stage-label'].textContent)}
+const text=html.replace(/<style>[\s\S]*?<\/style>|<script[\s\S]*?<\/script>|<[^>]+>/g,' ').replace(/\s+/g,' ').trim();assert(text.length>10);
+console.log(JSON.stringify({result:'PASS',meshCount:debug.meshCount,canvas:[canvas.width,canvas.height],drawCalls,particleCount:stopped,visibleMarkupCharacters:text.length,checks:['startup drawing','idle breathing','zoom endpoints','depth response','exchange spawning','stable stopped count','checkpoint buttons','local references']},null,2));
